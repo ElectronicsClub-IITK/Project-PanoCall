@@ -26,4 +26,13 @@ cd pipelines/cuda_sift
 python run_pipeline.py --feature-max-dimension 640 --blend-mode fast
 ```
 
+Run the persistent 24 FPS video mode with five-second background recalibration:
+
+```powershell
+cd pipelines/cuda_sift
+python run_realtime.py --camera0 0 --camera1 1 --target-fps 24 --recalibrate-seconds 5
+```
+
+On Windows, use `pipelines/cuda_sift/run_live_webcams.ps1` for a one-command webcam test. Live perspective warp and cached feather blending run in the fused CUDA renderer.
+
 See the detailed [implementation guide](implementation.md) for prerequisites, required files, inputs, outputs, and real-time usage. The shorter [CUDA pipeline guide](docs/cuda_sift_pipeline.md) and [documentation index](docs/README.md) are also available.

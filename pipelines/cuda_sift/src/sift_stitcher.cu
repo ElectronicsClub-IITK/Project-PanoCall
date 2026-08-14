@@ -22,6 +22,7 @@
 #include <cstdint>
 
 #include <cuda_runtime.h>
+#include <cuda_fp16.h>
 #include <cublas_v2.h>
 
 using namespace std;
@@ -37,8 +38,8 @@ using namespace std;
 
 #define MAX_CAMERAS 6
 #define ACTIVE_CAMERAS 2
-#define NUM_OCTAVES 4
-#define NUM_SCALES 8
+#define NUM_OCTAVES 3
+#define NUM_SCALES 6
 #define NUM_DOG_IMAGES (NUM_SCALES - 1)
 #define CONTRAST_THRESHOLD 1.0f
 
@@ -2833,7 +2834,7 @@ void descriptorKernel(
 
 __global__
 void packDescriptorDataKernel(
-    const Descriptor* descriptors, int count, float* data, float* norms)
+    const Descriptor* descriptors, int count, __half* data, float* norms)
 {
     const int descriptor = blockIdx.x * blockDim.x + threadIdx.x;
     if(descriptor >= count) return;
@@ -2842,7 +2843,7 @@ void packDescriptorDataKernel(
     for(int component = 0; component < 128; ++component)
     {
         const float value = descriptors[descriptor].data[component];
-        data[descriptor * 128 + component] = value;
+        data[descriptor * 128 + component] = __float2half_rn(value);
         norm = fmaf(value, value, norm);
     }
     norms[descriptor] = norm;
@@ -6108,7 +6109,7 @@ bool buildDescriptorMatching(Camera cameras[])
     if(queryCount == 0 || trainCount == 0) return true;
     if(!allocateMatchBuffers(queryCamera)) return false;
 
-    float *queryData = nullptr, *trainData = nullptr;
+    __half *queryData = nullptr, *trainData = nullptr;
     float *queryNorms = nullptr, *trainNorms = nullptr, *distances = nullptr;
     cublasHandle_t handle = nullptr;
     auto cleanup = [&]() {
@@ -6119,8 +6120,8 @@ bool buildDescriptorMatching(Camera cameras[])
         if(trainNorms) cudaFree(trainNorms);
         if(distances) cudaFree(distances);
     };
-    const size_t queryDataBytes = static_cast<size_t>(queryCount) * 128 * sizeof(float);
-    const size_t trainDataBytes = static_cast<size_t>(trainCount) * 128 * sizeof(float);
+    const size_t queryDataBytes = static_cast<size_t>(queryCount) * 128 * sizeof(__half);
+    const size_t trainDataBytes = static_cast<size_t>(trainCount) * 128 * sizeof(__half);
     const size_t distanceBytes = static_cast<size_t>(queryCount) * trainCount * sizeof(float);
     if(cudaMalloc((void**)&queryData, queryDataBytes) != cudaSuccess ||
        cudaMalloc((void**)&trainData, trainDataBytes) != cudaSuccess ||
@@ -6142,11 +6143,13 @@ bool buildDescriptorMatching(Camera cameras[])
         cleanup(); return false;
     }
     const float alpha = -2.0f, beta = 0.0f;
-    const cublasStatus_t gemmStatus = cublasSgemm(
+    const cublasStatus_t gemmStatus = cublasGemmEx(
         handle, CUBLAS_OP_T, CUBLAS_OP_N,
         trainCount, queryCount, 128,
-        &alpha, trainData, 128, queryData, 128,
-        &beta, distances, trainCount);
+        &alpha, trainData, CUDA_R_16F, 128,
+        queryData, CUDA_R_16F, 128,
+        &beta, distances, CUDA_R_32F, trainCount,
+        CUBLAS_COMPUTE_32F_FAST_16F, CUBLAS_GEMM_DEFAULT_TENSOR_OP);
     if(gemmStatus != CUBLAS_STATUS_SUCCESS)
     {
         cout << "cuBLAS descriptor distance calculation failed" << endl;
@@ -6188,9 +6191,7 @@ std::vector<float> generateSigmaLevels()
         2.52f,
         3.17f,
         4.00f,
-        5.04f,
-        6.35f,
-        8.00f
+        5.04f
     };
 }
 
@@ -6897,6 +6898,104 @@ bool contrastGPU(
 //----------------------------------------------------------
 
 bool buildGaussianPyramid(
+    Camera cameras[],
+    const std::vector<float>& sigmaLevels)
+{
+    cout << "\nBuilding concurrent Gaussian pyramids\n";
+    cudaStream_t streams[ACTIVE_CAMERAS] = {};
+    for(int camera = 0; camera < ACTIVE_CAMERAS; ++camera)
+    {
+        if(cudaStreamCreateWithFlags(&streams[camera], cudaStreamNonBlocking) != cudaSuccess)
+        {
+            for(int previous = 0; previous < camera; ++previous) cudaStreamDestroy(streams[previous]);
+            return false;
+        }
+    }
+    auto destroyStreams = [&]() {
+        for(int camera = 0; camera < ACTIVE_CAMERAS; ++camera)
+            if(streams[camera]) cudaStreamDestroy(streams[camera]);
+    };
+
+    for(int octave = 0; octave < NUM_OCTAVES; ++octave)
+    {
+        for(int scale = 0; scale < NUM_SCALES; ++scale)
+        {
+            const float sigma = scale == 0 ? sigmaLevels[0] : sqrtf(
+                sigmaLevels[scale] * sigmaLevels[scale] -
+                sigmaLevels[scale - 1] * sigmaLevels[scale - 1]);
+            int radius = 0;
+            const vector<float> kernel = generateGaussianKernel(sigma, radius);
+            // Constant memory is shared across streams.  Upload once per sigma,
+            // launch both cameras, and synchronize before changing it.
+            if(!uploadGaussianKernel(kernel, radius))
+            {
+                destroyStreams();
+                return false;
+            }
+            for(int camera = 0; camera < ACTIVE_CAMERAS; ++camera)
+            {
+                const int width = cameras[camera].pyramidWidths[octave];
+                const int height = cameras[camera].pyramidHeights[octave];
+                const int index = octave * NUM_SCALES + scale;
+                float* input = scale == 0 ? cameras[camera].octaveBaseGPU
+                                          : cameras[camera].gaussianGPU[index - 1];
+                dim3 block(32, 8);
+                dim3 grid((width + block.x - 1) / block.x,
+                          (height + block.y - 1) / block.y);
+                const size_t horizontalBytes = block.y * (block.x + 2 * radius) * sizeof(float);
+                const size_t verticalBytes = block.x * (block.y + 2 * radius) * sizeof(float);
+                horizontalGaussianKernel<<<grid, block, horizontalBytes, streams[camera]>>>(
+                    input, cameras[camera].horizontalBufferGPU, width, height);
+                verticalGaussianKernel<<<grid, block, verticalBytes, streams[camera]>>>(
+                    cameras[camera].horizontalBufferGPU, cameras[camera].gaussianGPU[index],
+                    width, height);
+            }
+            for(int camera = 0; camera < ACTIVE_CAMERAS; ++camera)
+            {
+                const cudaError_t status = cudaStreamSynchronize(streams[camera]);
+                if(status != cudaSuccess)
+                {
+                    cout << "Concurrent Gaussian blur failed: " << cudaGetErrorString(status) << endl;
+                    destroyStreams();
+                    return false;
+                }
+            }
+        }
+
+        if(octave < NUM_OCTAVES - 1)
+        {
+            for(int camera = 0; camera < ACTIVE_CAMERAS; ++camera)
+            {
+                const int width = cameras[camera].pyramidWidths[octave];
+                const int height = cameras[camera].pyramidHeights[octave];
+                const int outputWidth = width / 2;
+                const int outputHeight = height / 2;
+                dim3 block(16, 16);
+                dim3 grid((outputWidth + block.x - 1) / block.x,
+                          (outputHeight + block.y - 1) / block.y);
+                downsampleKernel<<<grid, block, 0, streams[camera]>>>(
+                    cameras[camera].octaveBaseGPU, cameras[camera].horizontalBufferGPU,
+                    width, height);
+                cudaMemcpyAsync(cameras[camera].octaveBaseGPU,
+                                cameras[camera].horizontalBufferGPU,
+                                static_cast<size_t>(outputWidth) * outputHeight * sizeof(float),
+                                cudaMemcpyDeviceToDevice, streams[camera]);
+            }
+            for(int camera = 0; camera < ACTIVE_CAMERAS; ++camera)
+            {
+                if(cudaStreamSynchronize(streams[camera]) != cudaSuccess)
+                {
+                    destroyStreams();
+                    return false;
+                }
+            }
+        }
+    }
+    destroyStreams();
+    return true;
+}
+
+bool buildGaussianPyramidSequential(
     Camera cameras[],
     const std::vector<float>& sigmaLevels
 )

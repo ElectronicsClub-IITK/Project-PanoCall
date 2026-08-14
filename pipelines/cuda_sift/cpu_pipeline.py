@@ -360,6 +360,31 @@ class RealtimePanoramaRenderer:
                 + reference.astype(np.float32) * self.reference_weight[..., None]).astype(np.uint8)
 
 
+def estimate_homography_from_cuda(cuda_directory: Path, *, ransac_iterations=2000,
+                                  ransac_threshold=5.0, seed=0,
+                                  coordinate_scales=((1.0, 1.0), (1.0, 1.0))):
+    """Estimate a homography without rendering, for periodic video calibration."""
+    timings = {}
+    started = perf_counter()
+    descriptor_count0, descriptor_count1, kp1, kp2, matches = read_compact_cuda_matches(
+        cuda_directory / "matches.bin", coordinate_scales)
+    timings["load_cuda_results"] = perf_counter() - started
+    started = perf_counter()
+    inliers, _ = custom_ransac_filter(kp1, kp2, matches, ransac_iterations, ransac_threshold, seed)
+    homography = refine_homography(kp1, kp2, inliers)
+    src = np.asarray([kp1[i][:2] for i, _, _ in inliers], dtype=np.float64)
+    dst = np.asarray([kp2[j][:2] for _, j, _ in inliers], dtype=np.float64)
+    forward = cv2.perspectiveTransform(src.reshape(-1, 1, 2), homography).reshape(-1, 2)
+    backward = cv2.perspectiveTransform(dst.reshape(-1, 1, 2),
+                                        np.linalg.inv(homography)).reshape(-1, 2)
+    reprojection = float(np.linalg.norm(forward - dst, axis=1).mean())
+    symmetric = float((np.linalg.norm(forward - dst, axis=1) +
+                       np.linalg.norm(backward - src, axis=1)).mean())
+    timings["homography"] = perf_counter() - started
+    return PipelineMetrics(descriptor_count0, descriptor_count1, len(matches), len(inliers),
+                           reprojection, symmetric, timings, homography.copy())
+
+
 def stitch_two_cameras(images, cuda_directory: Path, output_path: Path, *, ransac_iterations=2000,
                        ransac_threshold=5.0, seed=0,
                        coordinate_scales=((1.0, 1.0), (1.0, 1.0)), blend_mode="fast"):

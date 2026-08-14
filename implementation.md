@@ -142,7 +142,7 @@ Most useful options:
 
 | Option | Default | Use |
 |---|---:|---|
-| `--feature-max-dimension 640` | `1280` | Downscales only feature extraction; lowers CUDA calibration time while final panorama uses original image resolution. Use `0` to avoid downscaling. |
+| `--feature-max-dimension 640` | `640` | Downscales only feature extraction; lowers CUDA calibration time while final panorama uses original image resolution. Use `0` to avoid downscaling. |
 | `--blend-mode fast` | `fast` | Best option for low-latency output. |
 | `--blend-mode feather` | `fast` | Smoother seam for a single panorama, with more CPU work. |
 | `--ransac-iterations 2000` | `2000` | Number of robust homography trials. Increase for difficult matches. |
@@ -159,6 +159,28 @@ python run_pipeline.py --input-dir C:\captures\pair --output-dir C:\captures\res
 ```
 
 ## Real-time use with a fixed camera pair
+
+The repository includes `pipelines/cuda_sift/run_realtime.py`. It performs CUDA SIFT once at startup, renders every frame with the cached homography, and starts a background recalibration every five seconds by default:
+
+```powershell
+cd pipelines\cuda_sift
+python run_realtime.py --camera0 0 --camera1 1 --target-fps 24 --recalibrate-seconds 5
+```
+
+Camera arguments accept either numeric device indices or video paths. Press `q` to stop. Add `--no-display` for headless processing or `--output-video output\realtime.mp4` to record; omitting video output gives lower latency. Recalibration failure does not interrupt rendering: the last valid homography remains active.
+
+Live warp and blending run through `src/cuda_panorama_renderer.cu`. The renderer retains frame buffers, inverse homography maps, validity masks, and blend weights in GPU memory. Its per-frame path uploads two BGR frames, executes one fused bilinear-warp/blend kernel, and downloads the finished panorama. Available blend modes are:
+
+- `--blend-mode fast`: constant 50/50 weighting in the overlap.
+- `--blend-mode feather --feather-radius 96`: geometry-cached feather weights for a smoother seam. Weight construction runs only when a new homography is accepted.
+
+On Windows, the convenience script checks Python dependencies and launches both webcams:
+
+```powershell
+.\run_live_webcams.ps1 -Camera0 0 -Camera1 1 -Width 1280 -Height 720 -TargetFps 24 -RecalibrateSeconds 5 -BlendMode feather -Rebuild
+```
+
+The first run builds both the SIFT executable and `panocall_renderer.dll`. Later runs reuse them unless their CUDA sources change.
 
 Do the SIFT/homography calibration once using representative overlapping frames. Then keep the resulting `output/homography.npy` and reuse it while processing video frames. Do not rerun SIFT for every frame: feature extraction and matching are calibration work, not per-frame work for fixed cameras.
 

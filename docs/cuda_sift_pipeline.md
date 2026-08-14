@@ -45,13 +45,21 @@ python run_pipeline.py
 
 That is all. The script automatically prepares CUDA inputs, compiles `src/sift_stitcher.cu` when needed, runs descriptor matching, estimates the homography, blends the images, and saves the panorama.
 
-The production build uses shared-memory Gaussian kernels and cuBLAS descriptor matching. Feature extraction is capped at a 1280-pixel longest side by default while the panorama remains full resolution. For a lower-latency calibration pass, use:
+The production build uses shared-memory Gaussian kernels, three octaves, six scales, concurrent two-camera Gaussian pyramids, and FP16 cuBLAS descriptor matching with FP32 accumulation. Feature extraction is capped at a 640-pixel longest side by default while the panorama remains full resolution. Run explicitly with:
 
 ```powershell
 python run_pipeline.py --feature-max-dimension 640 --blend-mode fast
 ```
 
 For fixed-camera video, do not run SIFT on every frame. The command saves `output/homography.npy`; create one `RealtimePanoramaRenderer` from `pipelines/cuda_sift/cpu_pipeline.py` with that homography and reuse its `render(camera0_frame, camera1_frame)` method for the stream. Warp masks and blend weights are cached by the renderer. Use `--blend-mode feather` when seam quality matters more than one-shot latency.
+
+The provided persistent runner automates this design and recalibrates asynchronously every five seconds:
+
+```powershell
+python run_realtime.py --camera0 0 --camera1 1 --target-fps 24 --recalibrate-seconds 5
+```
+
+Live frames use the persistent CUDA renderer in `src/cuda_panorama_renderer.cu`; warp and blending are fused. Cached feather blending can be enabled with `--blend-mode feather --feather-radius 96`. Windows users can launch webcams with `run_live_webcams.ps1`.
 
 ## 5. Get the result
 

@@ -48,16 +48,26 @@ def find_camera_images(input_dir: Path, active_cameras: int) -> list[Path]:
 
 def prepare_cuda_inputs(image_paths: list[Path], cuda_work_dir: Path,
                         feature_max_dimension: int) -> tuple[list[np.ndarray], list[tuple[float, float]]]:
-    temp_dir = cuda_work_dir / "temp"
-    temp_dir.mkdir(parents=True, exist_ok=True)
     colour_images = []
-    coordinate_scales = []
-    metadata = []
     for camera, path in enumerate(image_paths):
         colour = cv2.imread(str(path), cv2.IMREAD_COLOR)
-        grayscale = cv2.imread(str(path), cv2.IMREAD_GRAYSCALE)
-        if colour is None or grayscale is None:
+        if colour is None:
             raise PipelineError(f"Cannot load camera {camera} image: {path}")
+        colour_images.append(colour)
+    return prepare_cuda_frames(colour_images, cuda_work_dir, feature_max_dimension)
+
+
+def prepare_cuda_frames(colour_images: list[np.ndarray], cuda_work_dir: Path,
+                        feature_max_dimension: int) -> tuple[list[np.ndarray], list[tuple[float, float]]]:
+    """Prepare already-decoded camera frames for the CUDA calibration binary."""
+    temp_dir = cuda_work_dir / "temp"
+    temp_dir.mkdir(parents=True, exist_ok=True)
+    coordinate_scales = []
+    metadata = []
+    for camera, colour in enumerate(colour_images):
+        if colour is None or colour.ndim not in (2, 3):
+            raise PipelineError(f"Invalid camera {camera} frame")
+        grayscale = colour if colour.ndim == 2 else cv2.cvtColor(colour, cv2.COLOR_BGR2GRAY)
         original_height, original_width = grayscale.shape
         longest_side = max(original_width, original_height)
         if feature_max_dimension and longest_side > feature_max_dimension:
@@ -69,7 +79,6 @@ def prepare_cuda_inputs(image_paths: list[Path], cuda_work_dir: Path,
                                   original_height / grayscale.shape[0]))
         grayscale.astype(np.float32).tofile(temp_dir / f"image_{camera}.bin")
         metadata.append((camera, grayscale.shape[1], grayscale.shape[0]))
-        colour_images.append(colour)
     with (temp_dir / "image_info.txt").open("w", encoding="utf-8", newline="\n") as handle:
         handle.write(f"{len(colour_images)}\n")
         for camera, width, height in metadata:
@@ -169,7 +178,7 @@ def main() -> int:
     parser.add_argument("--ransac-iterations", type=int, default=2000)
     parser.add_argument("--ransac-threshold", type=float, default=5.0)
     parser.add_argument("--seed", type=int, default=0, help="Fixed default makes RANSAC reproducible.")
-    parser.add_argument("--feature-max-dimension", type=int, default=1280,
+    parser.add_argument("--feature-max-dimension", type=int, default=640,
                         help="Downscale CUDA feature extraction to this longest side; 0 keeps full resolution.")
     parser.add_argument("--blend-mode", choices=("fast", "feather"), default="fast",
                         help="Fast is intended for video; feather gives a smoother one-shot panorama.")
