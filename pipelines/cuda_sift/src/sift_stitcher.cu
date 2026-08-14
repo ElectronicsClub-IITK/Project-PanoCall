@@ -19,6 +19,7 @@
 #include <vector>
 #include <numeric>
 #include <algorithm>
+#include <cstdint>
 
 #include <cuda_runtime.h>
 #include <cublas_v2.h>
@@ -26,6 +27,7 @@
 using namespace std;
 
 #define MAX_KERNEL_SIZE 64
+#define SIFT_DEBUG_PRINTF(...) do { } while (0)
 
 
 
@@ -143,6 +145,20 @@ struct DescriptorMatch
     float distance;
 };
 
+// Compact host payload for the CPU homography stage.  Keeping this separate
+// from Descriptor avoids downloading the 128-float descriptor vectors when
+// only the accepted match coordinates are needed outside CUDA.
+struct CompactMatch
+{
+    int queryX;
+    int queryY;
+    int queryOctave;
+    int trainX;
+    int trainY;
+    int trainOctave;
+    float distance;
+};
+
 //----------------------------------------------------------
 // Camera Structure
 //----------------------------------------------------------
@@ -194,6 +210,7 @@ struct Camera
     //----------------------------------------------------------
 
     std::vector<Descriptor> descriptorsCPU;
+    int descriptorCountCPU = 0;
     //--------------------------------------------------
     //
     // Descriptor Matches
@@ -205,6 +222,7 @@ struct Camera
 
     std::vector<DescriptorMatch>
         matchesCPU;
+    int matchCountCPU = 0;
 
     int* matchCountGPU =
         nullptr;
@@ -215,6 +233,7 @@ struct Camera
 
     // Number of Oriented Keypoints on GPU
     int* orientationCountGPU = nullptr;
+    int orientationCountCPU = 0;
 
     // Gradient Pointer Tables
     float** magnitudePointersGPU = nullptr;
@@ -1259,19 +1278,19 @@ void orientationKernel(
 
     if(tid == 0)
     {
-        printf(
+        SIFT_DEBUG_PRINTF(
             "Octave = %d  Scale = %d  PyramidIndex = %d\n",
             octave,
             scale,
             pyramidIndex
         );
 
-        printf(
+        SIFT_DEBUG_PRINTF(
             "Magnitude Pointer = %p\n",
             magnitude
         );
 
-        printf(
+        SIFT_DEBUG_PRINTF(
             "Orientation Pointer = %p\n",
             orientation
         );
@@ -1307,7 +1326,7 @@ void orientationKernel(
 
     if(tid == 0)
     {
-        printf(
+        SIFT_DEBUG_PRINTF(
             "Sigma = %f\n",
             sigma
         );
@@ -1328,7 +1347,7 @@ void orientationKernel(
 
     if(tid == 0)
     {
-        printf(
+        SIFT_DEBUG_PRINTF(
             "Radius = %d\n",
             radius
         );
@@ -1493,7 +1512,7 @@ void orientationKernel(
 
             if(tid == 0 && dx == 0 && dy == 0)
             {
-                printf(
+                SIFT_DEBUG_PRINTF(
                     "dx=%d dy=%d mag=%f angle=%f weight=%f \n",
                     dx,
                     dy,
@@ -1517,7 +1536,7 @@ void orientationKernel(
 
             if(tid == 0 && dx == 0 && dy == 0)
             {
-                printf(
+                SIFT_DEBUG_PRINTF(
                     "Computed Bin = %d\n",
                     bin
                 );
@@ -1587,19 +1606,19 @@ void orientationKernel(
 
           if(tid == 0)
             {
-                printf(
+                SIFT_DEBUG_PRINTF(
                     "Maximum Peak = %f\n",
                     maximumPeak
                 );
 
-                printf(
+                SIFT_DEBUG_PRINTF(
                     "Peak Threshold = %f\n",
                     peakThreshold
                 );
 
                 for(int i = 0; i < 36; i++)
                 {
-                    printf(
+                    SIFT_DEBUG_PRINTF(
                         "%d : %f\n",
                         i,
                         histogram[i]
@@ -1963,7 +1982,7 @@ void descriptorKernel(
                 dy == 0
             )
             {
-                printf(
+                SIFT_DEBUG_PRINTF(
                     "xRot=%f  yRot=%f\n",
                     xRot,
                     yRot
@@ -2087,7 +2106,7 @@ void descriptorKernel(
                 dy == 0
             )
             {
-                printf(
+                SIFT_DEBUG_PRINTF(
                     "Relative Angle=%f  Orientation Bin=%f\n",
                     angle,
                     orientationBin
@@ -2180,7 +2199,7 @@ void descriptorKernel(
                 dy == 0
             )
             {
-                printf(
+                SIFT_DEBUG_PRINTF(
                     "Weight=%f  Weighted Magnitude=%f\n",
                     gaussianWeight,
                     weightedMagnitude
@@ -2199,7 +2218,7 @@ void descriptorKernel(
                 dy == 0
             )
             {
-                printf(
+                SIFT_DEBUG_PRINTF(
                     "rowBin=%f  colBin=%f\n",
                     rowBin,
                     colBin
@@ -2278,7 +2297,7 @@ void descriptorKernel(
                 dy == 0
             )
             {
-                printf(
+                SIFT_DEBUG_PRINTF(
                     "r0=%d r1=%d wr0=%f wr1=%f\n",
                     r0,
                     r1,
@@ -2286,7 +2305,7 @@ void descriptorKernel(
                     wr1
                 );
 
-                printf(
+                SIFT_DEBUG_PRINTF(
                     "c0=%d c1=%d wc0=%f wc1=%f\n",
                     c0,
                     c1,
@@ -2355,7 +2374,7 @@ void descriptorKernel(
                 dy == 0
             )
             {
-                printf(
+                SIFT_DEBUG_PRINTF(
                     "o0=%d o1=%d wo0=%f wo1=%f\n",
                     o0,
                     o1,
@@ -2436,7 +2455,7 @@ void descriptorKernel(
                     dy == 0
                 )
                 {
-                    printf(
+                    SIFT_DEBUG_PRINTF(
                         "Row = %d  Weight = %f\n",
                         r,
                         wr
@@ -2515,7 +2534,7 @@ void descriptorKernel(
                         dy == 0
                     )
                     {
-                        printf(
+                        SIFT_DEBUG_PRINTF(
                             "Column = %d  Weight = %f\n",
                             c,
                             wc
@@ -2594,13 +2613,13 @@ void descriptorKernel(
                         dy == 0
                     )
                     {
-                        printf(
+                        SIFT_DEBUG_PRINTF(
                             "index0=%d value=%f\n",
                             index0,
                             descriptor.data[index0]
                         );
 
-                        printf(
+                        SIFT_DEBUG_PRINTF(
                             "index1=%d value=%f\n",
                             index1,
                             descriptor.data[index1]
@@ -2619,7 +2638,7 @@ void descriptorKernel(
                 dy == 0
             )
             {
-                printf(
+                SIFT_DEBUG_PRINTF(
                     "Descriptor Center Pixel : (%d,%d)\n",
                     xx,
                     yy
@@ -2742,16 +2761,16 @@ void descriptorKernel(
 
     if(tid == 0)
     {
-        printf(
+        SIFT_DEBUG_PRINTF(
             "Descriptor Stored At : %d\n",
             outputIndex
         );
 
-        printf("\nFirst Descriptor Values\n");
+        SIFT_DEBUG_PRINTF("\nFirst Descriptor Values\n");
 
       for(int i = 0; i < 16; i++)
       {
-          printf(
+          SIFT_DEBUG_PRINTF(
               "%d : %f\n",
               i,
               descriptor.data[i]
@@ -2767,7 +2786,7 @@ void descriptorKernel(
               descriptor.data[i];
       }
 
-      printf(
+      SIFT_DEBUG_PRINTF(
           "Descriptor Norm = %f\n",
           sqrtf(descriptorNorm)
       );
@@ -2780,11 +2799,11 @@ void descriptorKernel(
 
     if(tid == 0)
     {
-        printf(
+        SIFT_DEBUG_PRINTF(
             "Descriptor Kernel\n"
         );
 
-        printf(
+        SIFT_DEBUG_PRINTF(
             "x=%d y=%d octave=%d scale=%d angle=%f\n",
             x,
             y,
@@ -2793,7 +2812,7 @@ void descriptorKernel(
             keypointAngle
         );
 
-        printf(
+        SIFT_DEBUG_PRINTF(
             "Magnitude=%p Orientation=%p\n",
             magnitude,
             orientation
@@ -2892,6 +2911,52 @@ void descriptorMatchingKernel(
     }
 }
 
+__global__
+void compactMatchesKernel(
+    const DescriptorMatch* matches,
+    int matchCount,
+    const Descriptor* queryDescriptors,
+    const Descriptor* trainDescriptors,
+    CompactMatch* output)
+{
+    const int index = blockIdx.x * blockDim.x + threadIdx.x;
+    if(index >= matchCount) return;
+    const DescriptorMatch match = matches[index];
+    const Descriptor& query = queryDescriptors[match.queryIndex];
+    const Descriptor& train = trainDescriptors[match.trainIndex];
+    output[index] = {query.x, query.y, query.octave,
+                     train.x, train.y, train.octave, match.distance};
+}
+
+__global__
+void countEdgeKeypointsKernel(
+    const unsigned char* edgeMap,
+    int pixels,
+    int* outputCount)
+{
+    const int pixel = blockIdx.x * blockDim.x + threadIdx.x;
+    if(pixel < pixels && edgeMap[pixel] != 0) atomicAdd(outputCount, 1);
+}
+
+__global__
+void compactEdgeKeypointsKernel(
+    const unsigned char* edgeMap,
+    const float* dogImage,
+    int width,
+    int height,
+    int octave,
+    int dogLevel,
+    NMSKeypoint* output,
+    int* outputCount)
+{
+    const int pixel = blockIdx.x * blockDim.x + threadIdx.x;
+    const int pixels = width * height;
+    if(pixel >= pixels || edgeMap[pixel] == 0) return;
+    const int outputIndex = atomicAdd(outputCount, 1);
+    output[outputIndex] = {fabsf(dogImage[pixel]), pixel % width,
+                           pixel / width, octave, dogLevel};
+}
+
 //=====================================================
 // BUILD EDGE PYRAMID
 //=====================================================
@@ -2950,45 +3015,8 @@ bool buildEdgePyramid(
                     return false;
                 }
 
-                //--------------------------------------------------
-                // Copy Edge Map
-                //--------------------------------------------------
-
-                vector<unsigned char> edgeCPU(
-                    width * height
-                );
-
-                cudaMemcpy(
-                    edgeCPU.data(),
-                    cameras[camera].edgeGPU[index],
-                    width * height *
-                    sizeof(unsigned char),
-                    cudaMemcpyDeviceToHost
-                );
-
-                //--------------------------------------------------
-                // Count Points
-                //--------------------------------------------------
-
-                int edgeCount = 0;
-
-                for(int i = 0;
-                    i < width * height;
-                    i++)
-                {
-                    if(edgeCPU[i])
-                    {
-                        edgeCount++;
-                    }
-                }
-
-                totalEdge += edgeCount;
-
-                cout << "Dog "
-                     << dog
-                     << " : "
-                     << edgeCount
-                     << endl;
+                // Counts are intentionally not downloaded here; the next GPU
+                // compaction stage extracts only actual candidates.
             }
         }
 
@@ -3692,109 +3720,82 @@ vector<NMSKeypoint> extractEdgeKeypoints(
 {
     vector<NMSKeypoint> keypoints;
 
-    //------------------------------------------------------
-    // Every Octave
-    //------------------------------------------------------
-
-    for(int octave = 0;
-        octave < NUM_OCTAVES;
-        octave++)
+    // Compact candidate coordinates on the device.  The previous path copied
+    // every full-resolution edge mask and float DoG image to the CPU, although
+    // only a small fraction of their pixels represented candidates.
+    int* candidateCountGPU = nullptr;
+    if(cudaMalloc((void**)&candidateCountGPU, sizeof(int)) != cudaSuccess)
     {
-        int width =
-            cameras[cameraID].
-            pyramidWidths[octave];
+        cout << "Failed To Allocate Edge Candidate Compaction Buffers\n";
+        return keypoints;
+    }
 
-        int height =
-            cameras[cameraID].
-            pyramidHeights[octave];
-
-        int pixels =
-            width * height;
-
-        //--------------------------------------------------
-        // Download Edge Map
-        //--------------------------------------------------
-
-        vector<unsigned char> edgeCPU(
-            pixels
-        );
-
-        //--------------------------------------------------
-        // Download DoG Image
-        //--------------------------------------------------
-
-        vector<float> dogCPU(
-            pixels
-        );
-
-        //--------------------------------------------------
-        // Every Middle DoG
-        //--------------------------------------------------
-
-        for(int dog = 1;
-            dog < NUM_DOG_IMAGES - 1;
-            dog++)
+    constexpr int threads = 256;
+    cudaMemset(candidateCountGPU, 0, sizeof(int));
+    // Pass 1: count every candidate without synchronizing between levels.
+    for(int octave = 0; octave < NUM_OCTAVES; octave++)
+    {
+        const int width = cameras[cameraID].pyramidWidths[octave];
+        const int height = cameras[cameraID].pyramidHeights[octave];
+        const int pixels = width * height;
+        for(int dog = 1; dog < NUM_DOG_IMAGES - 1; dog++)
         {
-            int index =
-                octave *
-                NUM_DOG_IMAGES +
-                dog;
-
-            cudaMemcpy(
-                edgeCPU.data(),
-                cameras[cameraID].
-                edgeGPU[index],
-                pixels *
-                sizeof(unsigned char),
-                cudaMemcpyDeviceToHost
-            );
-
-            cudaMemcpy(
-                dogCPU.data(),
-                cameras[cameraID].
-                dogGPU[index],
-                pixels *
-                sizeof(float),
-                cudaMemcpyDeviceToHost
-            );
-
-            //--------------------------------------------------
-            // Extract Keypoints
-            //--------------------------------------------------
-
-            for(int y = 0;
-                y < height;
-                y++)
-            {
-                for(int x = 0;
-                    x < width;
-                    x++)
-                {
-                    int pixel =
-                        y * width + x;
-
-                    if(edgeCPU[pixel] == 0)
-                        continue;
-
-                    NMSKeypoint kp;
-
-                    kp.response =
-                        fabs(
-                            dogCPU[pixel]
-                        );
-
-                    kp.x = x;
-                    kp.y = y;
-
-                    kp.octave = octave;
-                    kp.dog = dog;
-
-                    keypoints.push_back(
-                        kp
-                    );
-                }
-            }
+            const int index = octave * NUM_DOG_IMAGES + dog;
+            countEdgeKeypointsKernel<<<(pixels + threads - 1) / threads, threads>>>(
+                cameras[cameraID].edgeGPU[index], pixels, candidateCountGPU);
         }
+    }
+
+    int totalCandidates = 0;
+    cudaError_t status = cudaMemcpy(&totalCandidates, candidateCountGPU, sizeof(int),
+                                    cudaMemcpyDeviceToHost);
+    if(status != cudaSuccess || totalCandidates < 0)
+    {
+        cudaFree(candidateCountGPU);
+        cout << "Failed To Count Edge Candidates\n";
+        return {};
+    }
+    if(totalCandidates == 0)
+    {
+        cudaFree(candidateCountGPU);
+        return keypoints;
+    }
+
+    NMSKeypoint* candidatesGPU = nullptr;
+    if(cudaMalloc((void**)&candidatesGPU,
+                  static_cast<size_t>(totalCandidates) * sizeof(NMSKeypoint)) != cudaSuccess)
+    {
+        cudaFree(candidateCountGPU);
+        cout << "Failed To Allocate Compact Edge Candidate Buffer\n";
+        return {};
+    }
+
+    // Pass 2: append every level into one device array, followed by one D2H
+    // payload transfer for the complete camera.
+    cudaMemset(candidateCountGPU, 0, sizeof(int));
+    for(int octave = 0; octave < NUM_OCTAVES; octave++)
+    {
+        const int width = cameras[cameraID].pyramidWidths[octave];
+        const int height = cameras[cameraID].pyramidHeights[octave];
+        const int pixels = width * height;
+        for(int dog = 1; dog < NUM_DOG_IMAGES - 1; dog++)
+        {
+            const int index = octave * NUM_DOG_IMAGES + dog;
+            compactEdgeKeypointsKernel<<<(pixels + threads - 1) / threads, threads>>>(
+                cameras[cameraID].edgeGPU[index], cameras[cameraID].dogGPU[index],
+                width, height, octave, dog, candidatesGPU, candidateCountGPU);
+        }
+    }
+    keypoints.resize(totalCandidates);
+    status = cudaMemcpy(keypoints.data(), candidatesGPU,
+                        static_cast<size_t>(totalCandidates) * sizeof(NMSKeypoint),
+                        cudaMemcpyDeviceToHost);
+    cudaFree(candidatesGPU);
+    cudaFree(candidateCountGPU);
+    if(status != cudaSuccess)
+    {
+        cout << "Failed To Download Edge Candidates\n";
+        return {};
     }
 
     cout << "\nExtracted "
@@ -3956,6 +3957,10 @@ bool buildNMSPyramid(
             << nmsKeypoints.size()
             << endl;
 
+        // Binary NMS maps were previously rebuilt on the CPU and uploaded to
+        // CUDA, but no production stage consumes them; orientation uses the
+        // compact keypoint array directly.
+#if 0
         //--------------------------------------------------
         // Clear Every NMS Map
         //--------------------------------------------------
@@ -4067,6 +4072,7 @@ bool buildNMSPyramid(
                 );
             }
         }
+#endif
     }
 
     return true;
@@ -4190,10 +4196,7 @@ bool allocateDescriptorBuffers(
     // One Descriptor Per Oriented Keypoint
     //--------------------------------------------------
 
-    int descriptorCount =
-        static_cast<int>(
-            camera.orientedKeypointsCPU.size()
-        );
+    int descriptorCount = camera.orientationCountCPU;
 
     if(descriptorCount == 0)
     {
@@ -4293,9 +4296,7 @@ bool allocateMatchBuffers(
     //--------------------------------------------------
 
     int maxMatches =
-        static_cast<int>(
-            camera.descriptorsCPU.size()
-        );
+        camera.descriptorCountCPU;
 
     if(maxMatches == 0)
     {
@@ -4435,6 +4436,12 @@ bool downloadMatchResults(
         << "Downloaded Match Count : "
         << totalMatches
         << endl;
+
+    // The CUDA-to-CPU interface consumes only the accepted match geometry.
+    // Leave descriptors and DescriptorMatch entries on the GPU until that
+    // compact payload is created below.
+    camera.matchCountCPU = totalMatches;
+    return true;
 
     camera.matchesCPU.resize(
         totalMatches
@@ -4806,6 +4813,66 @@ bool exportMatchesForVisualization(
 // Upload Oriented Keypoints
 //
 //==========================================================
+
+bool exportCompactMatches(
+    const Camera& queryCamera,
+    const Camera& trainCamera,
+    const string& fileName)
+{
+    const int count = queryCamera.matchCountCPU;
+    if(count < 0) return false;
+
+    CompactMatch* compactGPU = nullptr;
+    vector<CompactMatch> compactCPU(count);
+    if(count > 0)
+    {
+        if(cudaMalloc((void**)&compactGPU, count * sizeof(CompactMatch)) != cudaSuccess)
+        {
+            cout << "Failed To Allocate Compact Match Buffer\n";
+            return false;
+        }
+        constexpr int threads = 256;
+        compactMatchesKernel<<<(count + threads - 1) / threads, threads>>>(
+            queryCamera.matchesGPU, count, queryCamera.descriptorsGPU,
+            trainCamera.descriptorsGPU, compactGPU);
+        cudaError_t status = cudaGetLastError();
+        if(status == cudaSuccess)
+            status = cudaMemcpy(compactCPU.data(), compactGPU,
+                                count * sizeof(CompactMatch), cudaMemcpyDeviceToHost);
+        cudaFree(compactGPU);
+        if(status != cudaSuccess)
+        {
+            cout << "Failed To Download Compact Matches: "
+                 << cudaGetErrorString(status) << endl;
+            return false;
+        }
+    }
+
+    ofstream output(fileName, ios::binary);
+    if(!output.is_open())
+    {
+        cout << "Failed To Open " << fileName << endl;
+        return false;
+    }
+    const uint32_t header[] = {
+        0x43534D50u,  // "CSMP": CUDA SIFT match payload
+        1u,
+        static_cast<uint32_t>(queryCamera.descriptorCountCPU),
+        static_cast<uint32_t>(trainCamera.descriptorCountCPU),
+        static_cast<uint32_t>(count)
+    };
+    output.write(reinterpret_cast<const char*>(header), sizeof(header));
+    if(count > 0)
+        output.write(reinterpret_cast<const char*>(compactCPU.data()),
+                     count * sizeof(CompactMatch));
+    if(!output.good())
+    {
+        cout << "Failed To Write " << fileName << endl;
+        return false;
+    }
+    cout << "Exported " << count << " compact matches to " << fileName << endl;
+    return true;
+}
 
 bool uploadOrientedKeypoints(
     Camera& camera
@@ -5463,6 +5530,11 @@ bool downloadOrientationResults(
         totalOrientations = capacity;
     }
 
+    // Descriptor generation consumes orientedKeypointsGPU directly.  Keep the
+    // array resident and transfer only its four-byte count to the host.
+    camera.orientationCountCPU = totalOrientations;
+    return true;
+
     camera.orientedKeypointsCPU.resize(
         totalOrientations
     );
@@ -5560,6 +5632,11 @@ bool downloadDescriptorResults(
         << "Downloaded Descriptor Count : "
         << totalDescriptors
         << endl;
+
+    // Matching uses descriptors in device memory.  A count is sufficient for
+    // allocation and lets us avoid a multi-megabyte device-to-host download.
+    camera.descriptorCountCPU = totalDescriptors;
+    return true;
 
     camera.descriptorsCPU.resize(
         totalDescriptors
@@ -5767,7 +5844,7 @@ bool buildOrientationAssignment(
         cout
             << "Oriented Keypoints : "
             << cameras[camera]
-               .orientedKeypointsCPU.size()
+               .orientationCountCPU
             << endl;
     }
 
@@ -5817,11 +5894,7 @@ bool buildDescriptorGeneration(
         //
         //--------------------------------------------------
 
-        int totalKeypoints =
-            static_cast<int>(
-                cameras[camera]
-                .orientedKeypointsCPU.size()
-            );
+        int totalKeypoints = cameras[camera].orientationCountCPU;
 
         cout
             << "Oriented Keypoints : "
@@ -5845,21 +5918,6 @@ bool buildDescriptorGeneration(
             );
 
         if(!allocationStatus)
-        {
-            return false;
-        }
-
-        //--------------------------------------------------
-        //
-        // Upload Oriented Keypoints
-        //
-        //--------------------------------------------------
-
-        if(
-            !uploadOrientedKeypoints(
-                cameras[camera]
-            )
-        )
         {
             return false;
         }
@@ -6026,7 +6084,7 @@ bool buildDescriptorGeneration(
         cout
             << "Descriptors : "
             << cameras[camera]
-               .descriptorsCPU.size()
+               .descriptorCountCPU
             << endl;
     }
 
@@ -6043,8 +6101,8 @@ bool buildDescriptorMatching(Camera cameras[])
 {
     Camera& queryCamera = cameras[0];
     Camera& trainCamera = cameras[1];
-    const int queryCount = static_cast<int>(queryCamera.descriptorsCPU.size());
-    const int trainCount = static_cast<int>(trainCamera.descriptorsCPU.size());
+    const int queryCount = queryCamera.descriptorCountCPU;
+    const int trainCount = trainCamera.descriptorCountCPU;
     cout << "Query Descriptors : " << queryCount << endl;
     cout << "Train Descriptors : " << trainCount << endl;
     if(queryCount == 0 || trainCount == 0) return true;
@@ -6105,10 +6163,8 @@ bool buildDescriptorMatching(Camera cameras[])
         return false;
     }
     if(!downloadMatchResults(queryCamera)) return false;
-    if(!exportDescriptorsForVisualization(queryCamera, "camera0_descriptors.txt")) return false;
-    if(!exportDescriptorsForVisualization(trainCamera, "camera1_descriptors.txt")) return false;
-    if(!exportMatchesForVisualization(queryCamera, &trainCamera, "matches.txt")) return false;
-    cout << "Total Accepted Matches : " << queryCamera.matchesCPU.size() << endl;
+    if(!exportCompactMatches(queryCamera, trainCamera, "matches.bin")) return false;
+    cout << "Total Accepted Matches : " << queryCamera.matchCountCPU << endl;
     return true;
 }
 
@@ -7375,29 +7431,6 @@ bool buildExtremaPyramid(
                     return false;
                 }
 
-                std::vector<unsigned char> extremaCPU(width * height);
-
-                cudaMemcpy(
-                    extremaCPU.data(),
-                    cameras[camera].extremaGPU[currentIndex],
-                    width * height * sizeof(unsigned char),
-                    cudaMemcpyDeviceToHost
-                );
-
-                int extremaCount = 0;
-
-                for(int i = 0; i < width * height; i++)
-                {
-                    if(extremaCPU[i])
-                        extremaCount++;
-                }
-
-                cout << "Dog "
-                    << dog
-                    << " : "
-                    << extremaCount
-                    << endl;
-
                 cout
                     << "Camera "
                     << camera
@@ -7451,9 +7484,6 @@ bool buildContrastPyramid(
         //--------------------------------------------------
 
 
-        int totalExtrema = 0;
-        int totalContrast = 0;
-
         for(int octave = 0;
             octave < NUM_OCTAVES;
             octave++)
@@ -7506,40 +7536,6 @@ bool buildContrastPyramid(
                         height
                     );
 
-                    std::vector<unsigned char> extremaCPU(width * height);
-                    std::vector<unsigned char> contrastCPU(width * height);
-
-                    cudaMemcpy(
-                        extremaCPU.data(),
-                        cameras[camera].extremaGPU[index],
-                        width * height,
-                        cudaMemcpyDeviceToHost
-                    );
-
-                    cudaMemcpy(
-                        contrastCPU.data(),
-                        cameras[camera].contrastGPU[index],
-                        width * height,
-                        cudaMemcpyDeviceToHost
-                    );
-
-                    int extremaCount = 0;
-                    int contrastCount = 0;
-
-                    for(int i = 0; i < width * height; i++)
-                    {
-                        if(extremaCPU[i]) extremaCount++;
-                        if(contrastCPU[i]) contrastCount++;
-                    }
-                    totalExtrema += extremaCount;
-                    totalContrast += contrastCount;
-
-                    cout << "Extrema = " << extremaCount
-                        << "   Contrast = " << contrastCount
-                        << endl;
-
-
-
                 if(!contrastStatus)
                 {
                     cout
@@ -7556,21 +7552,6 @@ bool buildContrastPyramid(
                     << "  DoG "
                     << dog
                     << " Completed\n";
-                    cout << "\n=================================\n";
-
-                    cout << "Camera "
-                        << camera
-                        << " Summary\n";
-
-                    cout << "=================================\n";
-
-                    cout << "Total Extrema  : "
-                        << totalExtrema
-                        << endl;
-
-                    cout << "Total Contrast : "
-                        << totalContrast
-                        << endl;
             }
 
         }
@@ -7982,18 +7963,8 @@ int main()
     //
     //------------------------------------------------------
 
-    bool nmsAllocationStatus =
-        allocateNMSPyramid(
-            cameras
-        );
-
-    if(!nmsAllocationStatus)
-    {
-        return -1;
-    }
-
-    cout
-        << "NMS Pyramid Allocated Successfully.\n";
+    // No NMS mask pyramid is allocated: the production path consumes the
+    // compact NMS keypoint array directly.
 
 
     cudaError_t sticky = cudaGetLastError();
@@ -8158,6 +8129,9 @@ int main()
         << "\nNMS Pyramid Built Successfully.\n";
 
     cout << "\n=================================\n";
+    // This diagnostic copies every extrema/contrast/edge mask to the host.
+    // It is intentionally disabled in the production path.
+#if 0
     cout << "Keypoint Loss Diagnosis\n";
     cout << "=================================\n";
 
@@ -8207,6 +8181,7 @@ int main()
             << " Descriptors=" << cameras[camera].descriptorsCPU.size() << "\n";
     }
 
+ #endif
     //------------------------------------------------------
     //
     // Build Orientation Assignment

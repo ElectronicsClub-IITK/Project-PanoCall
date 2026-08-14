@@ -143,7 +143,7 @@ def resolve_cuda_executable(args, build_dir: Path) -> Path:
 
 
 def run_cuda(executable: Path, cuda_work_dir: Path) -> None:
-    expected = ("camera0_descriptors.txt", "camera1_descriptors.txt", "matches.txt")
+    expected = ("matches.bin",)
     for name in expected:
         candidate = cuda_work_dir / name
         if candidate.exists():

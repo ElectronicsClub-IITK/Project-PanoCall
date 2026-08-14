@@ -26,4 +26,4 @@ cd pipelines/cuda_sift
 python run_pipeline.py --feature-max-dimension 640 --blend-mode fast
 ```
 
-See [the CUDA pipeline guide](docs/cuda_sift_pipeline.md) for requirements and real-time rendering guidance, and [the documentation index](docs/README.md) for theory notes.
+See the detailed [implementation guide](implementation.md) for prerequisites, required files, inputs, outputs, and real-time usage. The shorter [CUDA pipeline guide](docs/cuda_sift_pipeline.md) and [documentation index](docs/README.md) are also available.

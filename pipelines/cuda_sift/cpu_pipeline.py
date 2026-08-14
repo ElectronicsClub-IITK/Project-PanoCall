@@ -82,6 +82,56 @@ def read_cuda_matches(path: Path) -> list[dict]:
     return matches
 
 
+_COMPACT_MATCH_MAGIC = 0x43534D50
+_COMPACT_MATCH_VERSION = 1
+_COMPACT_MATCH_DTYPE = np.dtype([
+    ("query_x", "<i4"), ("query_y", "<i4"), ("query_octave", "<i4"),
+    ("train_x", "<i4"), ("train_y", "<i4"), ("train_octave", "<i4"),
+    ("distance", "<f4"),
+])
+
+
+def read_compact_cuda_matches(path: Path, coordinate_scales) -> tuple[int, int, list[tuple], list[tuple], list[tuple]]:
+    """Read the binary match payload emitted by ``sift_stitcher.cu``.
+
+    It contains only accepted correspondence geometry, not full 128-value
+    descriptors.  This avoids multi-megabyte device downloads and text parsing
+    while retaining the identical points used by the RANSAC stage.
+    """
+    try:
+        with path.open("rb") as handle:
+            header = np.fromfile(handle, dtype="<u4", count=5)
+            if len(header) != 5:
+                raise PipelineDataError(f"Truncated compact match header: {path}")
+            magic, version, descriptor_count0, descriptor_count1, match_count = map(int, header)
+            if magic != _COMPACT_MATCH_MAGIC or version != _COMPACT_MATCH_VERSION:
+                raise PipelineDataError(f"Unsupported compact match file: {path}")
+            records = np.fromfile(handle, dtype=_COMPACT_MATCH_DTYPE, count=match_count)
+    except OSError as error:
+        raise PipelineDataError(f"Cannot read compact match file {path}: {error}") from error
+    if len(records) != match_count:
+        raise PipelineDataError(f"Truncated compact match payload: {path}")
+    if match_count < 4:
+        raise PipelineDataError(f"At least 4 valid matches are required for RANSAC; found {match_count}")
+
+    kp0 = [None] * descriptor_count0
+    kp1 = [None] * descriptor_count1
+    matches = []
+    scale0_x, scale0_y = coordinate_scales[0]
+    scale1_x, scale1_y = coordinate_scales[1]
+    for index, record in enumerate(records):
+        # A descriptor match's query index is its deterministic record index
+        # within this compact payload; RANSAC requires only paired coordinates.
+        qx = float(record["query_x"] * (2 ** int(record["query_octave"])) * scale0_x)
+        qy = float(record["query_y"] * (2 ** int(record["query_octave"])) * scale0_y)
+        tx = float(record["train_x"] * (2 ** int(record["train_octave"])) * scale1_x)
+        ty = float(record["train_y"] * (2 ** int(record["train_octave"])) * scale1_y)
+        kp0[index] = (qx, qy, int(record["query_octave"]), 0, 0.0)
+        kp1[index] = (tx, ty, int(record["train_octave"]), 0, 0.0)
+        matches.append((index, index, float(record["distance"])))
+    return descriptor_count0, descriptor_count1, kp0[:match_count], kp1[:match_count], matches
+
+
 def bridge_cuda_to_cpu(camera0_descriptors: list[dict], camera1_descriptors: list[dict],
                        cuda_matches: list[dict],
                        coordinate_scales=((1.0, 1.0), (1.0, 1.0))) -> tuple[list[tuple], list[tuple], list[tuple]]:
@@ -317,10 +367,8 @@ def stitch_two_cameras(images, cuda_directory: Path, output_path: Path, *, ransa
         raise ValueError("The verified CPU panorama stage currently requires exactly two images.")
     timings = {}
     started = perf_counter()
-    d0 = read_cuda_descriptors(cuda_directory / "camera0_descriptors.txt")
-    d1 = read_cuda_descriptors(cuda_directory / "camera1_descriptors.txt")
-    raw_matches = read_cuda_matches(cuda_directory / "matches.txt")
-    kp1, kp2, matches = bridge_cuda_to_cpu(d0, d1, raw_matches, coordinate_scales)
+    descriptor_count0, descriptor_count1, kp1, kp2, matches = read_compact_cuda_matches(
+        cuda_directory / "matches.bin", coordinate_scales)
     timings["load_cuda_results"] = perf_counter() - started
     started = perf_counter()
     inliers, _ = custom_ransac_filter(kp1, kp2, matches, ransac_iterations, ransac_threshold, seed)
@@ -342,5 +390,5 @@ def stitch_two_cameras(images, cuda_directory: Path, output_path: Path, *, ransa
     if not cv2.imwrite(str(output_path), panorama) or not output_path.is_file() or output_path.stat().st_size == 0:
         raise PipelineDataError(f"Could not write final panorama to {output_path}")
     timings["encode_output"] = perf_counter() - started
-    return PipelineMetrics(len(d0), len(d1), len(matches), len(inliers), reprojection, symmetric,
+    return PipelineMetrics(descriptor_count0, descriptor_count1, len(matches), len(inliers), reprojection, symmetric,
                            timings, H.copy())
