@@ -15,6 +15,27 @@ _BYTE_PTR = ctypes.POINTER(ctypes.c_ubyte)
 _DOUBLE_PTR = ctypes.POINTER(ctypes.c_double)
 
 
+def panorama_geometry(camera0_shape, camera1_shape, homography):
+    """Return the integer world-space bounds used by the CUDA renderer."""
+    h0, w0 = tuple(camera0_shape[:2])
+    h1, w1 = tuple(camera1_shape[:2])
+    matrix = np.asarray(homography, dtype=np.float64).reshape(3, 3)
+    if not np.isfinite(matrix).all():
+        raise CudaRendererError("Homography contains non-finite values")
+    corners = np.array(((0.0, 0.0), (w0 - 1.0, 0.0),
+                        (w0 - 1.0, h0 - 1.0), (0.0, h0 - 1.0)), dtype=np.float64)
+    homogeneous = np.column_stack((corners, np.ones(4, dtype=np.float64)))
+    projected = (matrix @ homogeneous.T).T
+    if np.any(np.abs(projected[:, 2]) < 1e-12):
+        raise CudaRendererError("Homography maps an image corner to infinity")
+    projected = projected[:, :2] / projected[:, 2:3]
+    minimum_x = int(np.floor(min(float(projected[:, 0].min()), 0.0)))
+    minimum_y = int(np.floor(min(float(projected[:, 1].min()), 0.0)))
+    maximum_x = int(np.ceil(max(float(projected[:, 0].max()), float(w1))))
+    maximum_y = int(np.ceil(max(float(projected[:, 1].max()), float(h1))))
+    return minimum_x, minimum_y, maximum_x - minimum_x, maximum_y - minimum_y
+
+
 class CudaPanoramaRenderer:
     """Persistent GPU warp/blend renderer with cached geometry and weights."""
 
@@ -57,6 +78,9 @@ class CudaPanoramaRenderer:
         h0, w0 = self.camera0_shape
         h1, w1 = self.camera1_shape
         matrix = np.ascontiguousarray(homography, dtype=np.float64).reshape(3, 3)
+        self.homography = matrix.copy()
+        self.minimum_x, self.minimum_y, expected_width, expected_height = panorama_geometry(
+            self.camera0_shape, self.camera1_shape, matrix)
         self._handle = ctypes.c_void_p()
         output_width = ctypes.c_int()
         output_height = ctypes.c_int()
@@ -71,6 +95,11 @@ class CudaPanoramaRenderer:
             raise CudaRendererError(f"Could not create CUDA renderer: {detail}")
         self.width = output_width.value
         self.height = output_height.value
+        if self.width != expected_width or self.height != expected_height:
+            self.close()
+            raise CudaRendererError(
+                "CUDA/Python panorama geometry disagreement: "
+                f"CUDA={self.width}x{self.height}, Python={expected_width}x{expected_height}")
         self._output = np.empty((self.height, self.width, 3), dtype=np.uint8)
         self.last_elapsed_ms = 0.0
 

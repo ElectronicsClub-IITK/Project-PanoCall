@@ -59,7 +59,7 @@ The provided persistent runner automates this design and recalibrates asynchrono
 python run_realtime.py --camera0 0 --camera1 1 --target-fps 24 --recalibrate-seconds 5
 ```
 
-Live frames use the persistent CUDA renderer in `src/cuda_panorama_renderer.cu`; warp and blending are fused. Cached feather blending can be enabled with `--blend-mode feather --feather-radius 96`. Windows users can launch webcams with `run_live_webcams.ps1`.
+Live frames use the persistent CUDA renderer in `src/cuda_panorama_renderer.cu`; warp and blending are fused. Cached narrow-seam feathering can be enabled with `--blend-mode feather --feather-radius 48`. Periodic homographies are quality-checked against the initial fixed-camera transform before being installed. Windows users can launch webcams with `run_live_webcams.ps1`; pass `-DurationSeconds 15` for an automatically finalized recording.
 
 ## 5. Get the result
 

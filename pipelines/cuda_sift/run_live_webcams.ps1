@@ -5,8 +5,9 @@ param(
     [int]$Height = 720,
     [double]$TargetFps = 24,
     [double]$RecalibrateSeconds = 5,
+    [double]$DurationSeconds = 0,
     [ValidateSet("fast", "feather")][string]$BlendMode = "feather",
-    [double]$FeatherRadius = 96,
+    [double]$FeatherRadius = 48,
     [switch]$Rebuild
 )
 
@@ -28,6 +29,7 @@ $arguments = @(
     "--blend-mode", $BlendMode,
     "--feather-radius", $FeatherRadius
 )
+if ($DurationSeconds -gt 0) { $arguments += @("--duration-seconds", $DurationSeconds) }
 if ($Rebuild) { $arguments += @("--rebuild-cuda", "--rebuild-renderer") }
 & $python.Source @arguments
 exit $LASTEXITCODE

@@ -113,10 +113,17 @@ __global__ void buildGeometryKernel(
                                     fminf(sourceY, height0 - 1.0f - sourceY));
             float distance1 = static_cast<float>(min(min(referenceX, width1 - 1 - referenceX),
                                                      min(referenceY, height1 - 1 - referenceY)));
-            distance0 = fminf(fmaxf(distance0, 0.0f), featherRadius);
-            distance1 = fminf(fmaxf(distance1, 0.0f), featherRadius);
-            const float total = distance0 + distance1;
-            weight = total > 1e-6f ? distance0 / total : 0.5f;
+            distance0 = fmaxf(distance0, 0.0f);
+            distance1 = fmaxf(distance1, 0.0f);
+
+            // Choose the image whose sample is farther from its invalid border,
+            // and feather only a narrow band around the equality seam.  The old
+            // distance0/(distance0+distance1) formula mixed both cameras across
+            // the complete overlap and produced obvious double images whenever
+            // the physical webcams had foreground parallax.
+            float seamPosition = 0.5f + 0.5f * (distance0 - distance1) / featherRadius;
+            seamPosition = fminf(fmaxf(seamPosition, 0.0f), 1.0f);
+            weight = seamPosition * seamPosition * (3.0f - 2.0f * seamPosition);
         }
         else
         {

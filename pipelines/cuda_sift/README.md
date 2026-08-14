@@ -18,7 +18,9 @@ python run_realtime.py --camera0 0 --camera1 1 --target-fps 24 --recalibrate-sec
 
 The CUDA build uses three octaves, six scales, concurrent two-camera Gaussian pyramids, and FP16 descriptor matrices with FP32 cuBLAS accumulation.
 
-`run_realtime.py` also builds and loads `src/cuda_panorama_renderer.cu`. It caches inverse-warp geometry and feather weights on the GPU, then fuses bilinear warp and blending into one CUDA kernel per frame. Use `--blend-mode fast` for a fixed 50/50 overlap or `--blend-mode feather --feather-radius 96` for a smoother cached seam.
+`run_realtime.py` also builds and loads `src/cuda_panorama_renderer.cu`. It caches inverse-warp geometry and feather weights on the GPU, then fuses bilinear warp and blending into one CUDA kernel per frame. Use `--blend-mode fast` for a fixed 50/50 overlap or `--blend-mode feather --feather-radius 48` for a narrow cached seam that avoids double images across the rest of the overlap.
+
+Periodic homographies are checked for inlier quality, reprojection error, overlap, projected area, canvas size, and drift from the initial fixed-camera calibration. Unsafe updates are rejected while the last stable renderer continues. Use `--duration-seconds 15` to make a recording stop and finalize automatically; `q`, Escape, Ctrl+C, and closing the preview window also stop cleanly.
 
 Windows webcam shortcut:
 

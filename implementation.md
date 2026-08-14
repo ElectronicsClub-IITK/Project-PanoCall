@@ -167,12 +167,14 @@ cd pipelines\cuda_sift
 python run_realtime.py --camera0 0 --camera1 1 --target-fps 24 --recalibrate-seconds 5
 ```
 
-Camera arguments accept either numeric device indices or video paths. Press `q` to stop. Add `--no-display` for headless processing or `--output-video output\realtime.mp4` to record; omitting video output gives lower latency. Recalibration failure does not interrupt rendering: the last valid homography remains active.
+Camera arguments accept either numeric device indices or video paths. Press `q` or Escape, press Ctrl+C in the terminal, or close the preview window to stop. Add `--duration-seconds 15` to stop and finalize a recording automatically. Add `--no-display` for headless processing or `--output-video output\realtime.mp4` to record; omitting video output gives lower latency. Recalibration failure or rejection does not interrupt rendering: the last valid homography remains active.
 
 Live warp and blending run through `src/cuda_panorama_renderer.cu`. The renderer retains frame buffers, inverse homography maps, validity masks, and blend weights in GPU memory. Its per-frame path uploads two BGR frames, executes one fused bilinear-warp/blend kernel, and downloads the finished panorama. Available blend modes are:
 
 - `--blend-mode fast`: constant 50/50 weighting in the overlap.
-- `--blend-mode feather --feather-radius 96`: geometry-cached feather weights for a smoother seam. Weight construction runs only when a new homography is accepted.
+- `--blend-mode feather --feather-radius 48`: a narrow, geometry-cached seam transition. Outside that band the renderer selects one camera instead of mixing the entire overlap, which reduces parallax ghosting. Weight construction runs only when a new homography is accepted.
+
+Every periodic homography must pass minimum inlier count/ratio, reprojection and symmetric-error limits, convex projected-area and camera-overlap checks, a bounded canvas check, and a projected-corner drift check against the initial calibration. The corresponding command-line controls are `--min-inliers`, `--min-inlier-ratio`, `--max-reprojection-error`, `--max-symmetric-error`, and `--max-homography-drift`. For fixed webcams, keep the default 48-pixel drift limit unless the mounts can move.
 
 On Windows, the convenience script checks Python dependencies and launches both webcams:
 
