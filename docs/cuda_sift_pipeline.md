@@ -8,7 +8,7 @@ From the repository root, open `pipelines/cuda_sift`. It contains the complete r
 
 - `run_pipeline.py`
 - `cpu_pipeline.py`
-- `Sift_till_descriptor_matching_FIXED.ipynb`
+- `src/sift_stitcher.cu`
 
 ## 2. Install the one-time requirements
 
@@ -43,7 +43,7 @@ In PowerShell, from the project folder, run this single command:
 python run_pipeline.py
 ```
 
-That is all. The script automatically prepares CUDA inputs, extracts and compiles the CUDA code, runs descriptor matching, estimates the homography, blends the images, and saves the panorama.
+That is all. The script automatically prepares CUDA inputs, compiles `src/sift_stitcher.cu` when needed, runs descriptor matching, estimates the homography, blends the images, and saves the panorama.
 
 The production build uses shared-memory Gaussian kernels and cuBLAS descriptor matching. Feature extraction is capped at a 1280-pixel longest side by default while the panorama remains full resolution. For a lower-latency calibration pass, use:
 

@@ -4,7 +4,7 @@ PanoCall combines a Flutter IMU/VR companion app with reference and CUDA-acceler
 
 ## Repository layout
 
-- `lib/`, `android/`, `ios/`, `linux/`, `macos/`, `web/`, `windows/` — Flutter application and platform runners.
+- `apps/flutter/` — Flutter application, packages, and platform runners.
 - `pipelines/cuda_sift/` — production CUDA SIFT calibration and panorama pipeline.
 - `pipelines/cpu_reference/` — CPU SIFT reference implementation and sample assets.
 - `docs/` — setup guide and algorithm notes.
@@ -14,6 +14,7 @@ PanoCall combines a Flutter IMU/VR companion app with reference and CUDA-acceler
 Run the Flutter app:
 
 ```powershell
+cd apps/flutter
 flutter pub get
 flutter run
 ```

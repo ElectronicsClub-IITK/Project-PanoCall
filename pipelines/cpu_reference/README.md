@@ -1,5 +1,7 @@
 # SIFT From Scratch: Feature Detection, Matching, Homography Estimation and Panorama Stitching
 
+The original notebook has been converted into [`src/sift_from_scratch.py`](src/sift_from_scratch.py). Sample images and the reference panorama are in [`examples/`](examples/).
+
 ## Overview
 
 This project implements the complete Scale-Invariant Feature Transform (SIFT) pipeline entirely from scratch using Python and NumPy, without relying on OpenCV's built-in SIFT detector, descriptor generator, homography estimation, or RANSAC implementation.
