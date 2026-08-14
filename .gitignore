@@ -32,6 +32,7 @@ migrate_working_dir/
 .pub/
 /build/
 /coverage/
+/pipelines/cuda_sift/output/
 
 # Symbolication related
 app.*.symbols

@@ -2,9 +2,9 @@
 
 This guide runs the complete pipeline in one command: CUDA SIFT feature matching, homography, blending, and panorama creation.
 
-## 1. Copy the project folder
+## 1. Open the pipeline directory
 
-Copy the full `CUDA` project folder to a computer that has an NVIDIA GPU and CUDA Toolkit installed. Keep these files together:
+From the repository root, open `pipelines/cuda_sift`. It contains the complete runnable CUDA pipeline:
 
 - `run_pipeline.py`
 - `cpu_pipeline.py`
@@ -12,7 +12,7 @@ Copy the full `CUDA` project folder to a computer that has an NVIDIA GPU and CUD
 
 ## 2. Install the one-time requirements
 
-Open PowerShell inside the copied project folder and run:
+Open PowerShell inside `pipelines/cuda_sift` and run:
 
 ```powershell
 python -m pip install numpy opencv-python
@@ -21,7 +21,7 @@ nvcc --version
 
 The second command must show a CUDA version. If it says that `nvcc` is not found, CUDA Toolkit is not installed or not added to PATH.
 
-On Windows, CUDA compilation also needs the Visual Studio C++ Build Tools installed.
+On Windows, CUDA compilation also needs the Visual Studio C++ Build Tools installed. The runner initializes the MSVC build environment automatically when it compiles the CUDA executable.
 
 ## 3. Add the two images
 
@@ -45,12 +45,21 @@ python run_pipeline.py
 
 That is all. The script automatically prepares CUDA inputs, extracts and compiles the CUDA code, runs descriptor matching, estimates the homography, blends the images, and saves the panorama.
 
+The production build uses shared-memory Gaussian kernels and cuBLAS descriptor matching. Feature extraction is capped at a 1280-pixel longest side by default while the panorama remains full resolution. For a lower-latency calibration pass, use:
+
+```powershell
+python run_pipeline.py --feature-max-dimension 640 --blend-mode fast
+```
+
+For fixed-camera video, do not run SIFT on every frame. The command saves `output/homography.npy`; create one `RealtimePanoramaRenderer` from `pipelines/cuda_sift/cpu_pipeline.py` with that homography and reuse its `render(camera0_frame, camera1_frame)` method for the stream. Warp masks and blend weights are cached by the renderer. Use `--blend-mode feather` when seam quality matters more than one-shot latency.
+
 ## 5. Get the result
 
 When the terminal says `PIPELINE COMPLETE`, open:
 
 ```text
 output/panorama.png
+output/homography.npy
 ```
 
 The first run can take longer because CUDA code is compiled. Later runs reuse the compiled program automatically; replace only the two images in `input` and run the same command again.
